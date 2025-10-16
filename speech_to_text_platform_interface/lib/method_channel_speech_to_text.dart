@@ -14,6 +14,7 @@ class MethodChannelSpeechToText extends SpeechToTextPlatform {
   static const String notifyErrorMethod = 'notifyError';
   static const String notifyStatusMethod = 'notifyStatus';
   static const String soundLevelChangeMethod = "soundLevelChange";
+  static const String recordingCompleteMethod = "recordingComplete";
 
   /// Returns true if the user has already granted permission to access the
   /// microphone, does not prompt the user.
@@ -117,6 +118,9 @@ class MethodChannelSpeechToText extends SpeechToTextPlatform {
     if (null != (localeId ?? options?.localeId)) {
       listenParams["localeId"] = (localeId ?? options?.localeId);
     }
+    if (null != options?.transactionId) {
+      listenParams["transactionId"] = options!.transactionId;
+    }
     return await _channel.invokeMethod<bool>('listen', listenParams) ?? false;
   }
 
@@ -148,6 +152,11 @@ class MethodChannelSpeechToText extends SpeechToTextPlatform {
       case soundLevelChangeMethod:
         if (call.arguments is double && null != onSoundLevel) {
           onSoundLevel!(call.arguments);
+        }
+        break;
+      case recordingCompleteMethod:
+        if (call.arguments is String && null != onRecordingComplete) {
+          onRecordingComplete!(call.arguments);
         }
         break;
       default:

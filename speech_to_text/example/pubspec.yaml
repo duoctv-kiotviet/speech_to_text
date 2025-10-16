@@ -20,6 +20,10 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^4.0.0
 
+dependency_overrides:
+  speech_to_text_platform_interface:
+    path: ../../speech_to_text_platform_interface
+
 # The following section is specific to Flutter.
 flutter:
   uses-material-design: true

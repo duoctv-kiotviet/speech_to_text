@@ -86,6 +86,13 @@ typedef SpeechPhraseAggregator = String Function(List<String> phrases);
 /// the [SpeechToText.listen] method for use.
 typedef SpeechSoundLevelChange = Function(double level);
 
+/// Notified when audio recording is completed and file is available.
+///
+/// [filePath] is the absolute path to the recorded audio file.
+/// See the [onRecordingComplete] argument on the [SpeechToText.listen]
+/// method for use.
+typedef SpeechRecordingComplete = void Function(String filePath);
+
 /// An interface to device specific speech recognition services.
 ///
 /// The general flow of a speech recognition session is as follows:
@@ -105,6 +112,7 @@ class SpeechToText {
   static const String notifyErrorMethod = 'notifyError';
   static const String notifyStatusMethod = 'notifyStatus';
   static const String soundLevelChangeMethod = 'soundLevelChange';
+  static const String recordingCompleteMethod = 'recordingComplete';
   static const String listeningStatus = 'listening';
   static const String notListeningStatus = 'notListening';
   static const String doneStatus = 'done';
@@ -203,6 +211,7 @@ class SpeechToText {
   SpeechErrorListener? errorListener;
   SpeechStatusListener? statusListener;
   SpeechSoundLevelChange? _soundLevelChange;
+  SpeechRecordingComplete? _recordingCompleteListener;
 
   /// This overrides the default phrase aggregator to allow for
   /// different strategies for aggregating multiple phrases into
@@ -321,6 +330,7 @@ class SpeechToText {
     SpeechToTextPlatform.instance.onError = _onNotifyError;
     SpeechToTextPlatform.instance.onStatus = _onNotifyStatus;
     SpeechToTextPlatform.instance.onSoundLevel = _onSoundLevelChange;
+    SpeechToTextPlatform.instance.onRecordingComplete = _onRecordingComplete;
     _initWorked = await SpeechToTextPlatform.instance
         .initialize(debugLogging: debugLogging, options: options);
     return _initWorked;
@@ -414,6 +424,10 @@ class SpeechToText {
   /// haven't yet been able to determine from the Android documentation what the
   /// value means. On iOS the value returned is in decibels.
   ///
+  /// [onRecordingComplete] is an optional listener that is notified when the
+  /// audio recording is complete and the file is available. The callback receives
+  /// the absolute path to the recorded audio file.
+  ///
   /// [cancelOnError] if true then listening is automatically canceled on a
   /// permanent error. This defaults to false. When false cancel should be
   /// called from the error handler.
@@ -449,6 +463,7 @@ class SpeechToText {
       Duration? pauseFor,
       @Deprecated('Use SpeechListenOptions.localeId instead') String? localeId,
       SpeechSoundLevelChange? onSoundLevelChange,
+      SpeechRecordingComplete? onRecordingComplete,
       @Deprecated('Use SpeechListenOptions.cancelOnError instead')
       cancelOnError = false,
       @Deprecated('Use SpeechListenOptions.partialResults instead')
@@ -471,6 +486,7 @@ class SpeechToText {
     _notifiedDone = false;
     _resultListener = onResult;
     _soundLevelChange = onSoundLevelChange;
+    _recordingCompleteListener = onRecordingComplete;
     _partialResults = partialResults;
     _notifyFinalTimer?.cancel();
     _notifyFinalTimer = null;
@@ -751,6 +767,12 @@ class SpeechToText {
     _lastSoundLevel = level;
     if (null != _soundLevelChange) {
       _soundLevelChange!(level);
+    }
+  }
+
+  void _onRecordingComplete(String filePath) {
+    if (null != _recordingCompleteListener) {
+      _recordingCompleteListener!(filePath);
     }
   }
 

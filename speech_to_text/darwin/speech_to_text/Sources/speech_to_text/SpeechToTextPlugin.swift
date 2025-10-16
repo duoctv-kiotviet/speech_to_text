@@ -26,6 +26,7 @@ public enum SwiftSpeechToTextCallbackMethods: String {
   case notifyStatus
   case notifyError
   case soundLevelChange
+  case recordingComplete
 }
 
 public enum SpeechToTextStatus: String {
@@ -108,6 +109,10 @@ public class SpeechToTextPlugin: NSObject, FlutterPlugin {
   private let speechBufferSize: AVAudioFrameCount = 1024
   private static var subsystem = Bundle.main.bundleIdentifier!
   private let pluginLog = OSLog(subsystem: "com.csdcorp.speechToText", category: "plugin")
+  
+  // Audio recording variables
+  private var audioFile: AVAudioFile?
+  private var recordingFilePath: String?
 
   public static func register(with registrar: FlutterPluginRegistrar) {
 
@@ -165,6 +170,10 @@ public class SpeechToTextPlugin: NSObject, FlutterPlugin {
       if let localeParam = argsArr["localeId"] as? String {
         localeStr = localeParam
       }
+      var transactionId: String? = nil
+      if let transactionParam = argsArr["transactionId"] as? String {
+        transactionId = transactionParam
+      }
       guard let listenMode = ListenMode(rawValue: listenModeIndex) else {
         DispatchQueue.main.async {
           result(
@@ -183,17 +192,18 @@ public class SpeechToTextPlugin: NSObject, FlutterPlugin {
             let capturedSampleRate = sampleRate
             let capturedAutoPunctuation = autoPunctuation
             let capturedEnableHaptics = enableHaptics
+            let capturedTransactionId = transactionId
             Task {
                 listenForSpeech(
                     result, localeStr: capturedLocaleStr, partialResults: capturedPartialResults, onDevice: capturedOnDevice,
                     listenMode: capturedListenMode, sampleRate: capturedSampleRate, autoPunctuation: capturedAutoPunctuation,
-                    enableHaptics: capturedEnableHaptics)
+                    enableHaptics: capturedEnableHaptics, transactionId: capturedTransactionId)
             }
         } else {
             listenForSpeech(
                 result, localeStr: localeStr, partialResults: partialResults, onDevice: onDevice,
                 listenMode: listenMode, sampleRate: sampleRate, autoPunctuation: autoPunctuation,
-                enableHaptics: enableHaptics)
+                enableHaptics: enableHaptics, transactionId: transactionId)
         }
     case SwiftSpeechToTextMethods.stop.rawValue:
         if #available(iOS 13.0, *) {
@@ -432,6 +442,15 @@ public class SpeechToTextPlugin: NSObject, FlutterPlugin {
   private func stopCurrentListen() {
     self.currentRequest?.endAudio()
     stopAllPlayers()
+    
+    // Finalize audio recording
+    if let filePath = recordingFilePath {
+      audioFile = nil
+      os_log("Audio recording saved to: %{PUBLIC}@", log: pluginLog, type: .info, filePath)
+      invokeFlutter(SwiftSpeechToTextCallbackMethods.recordingComplete, arguments: filePath)
+      recordingFilePath = nil
+    }
+    
     do {
       try catchExceptionAsError {
         self.audioEngine?.stop()
@@ -483,7 +502,7 @@ public class SpeechToTextPlugin: NSObject, FlutterPlugin {
   private func listenForSpeech(
     _ result: @escaping FlutterResult, localeStr: String?, partialResults: Bool,
     onDevice: Bool, listenMode: ListenMode, sampleRate: Int, autoPunctuation: Bool,
-    enableHaptics: Bool
+    enableHaptics: Bool, transactionId: String?
   ) {
     if nil != currentTask || listening {
       sendBoolResult(false, result)
@@ -589,12 +608,50 @@ public class SpeechToTextPlugin: NSObject, FlutterPlugin {
         fmt = self.inputNode?.inputFormat(forBus: bus)
 
       #endif
+      
+      // Initialize audio recording file
+      do {
+        let tempDir = FileManager.default.temporaryDirectory
+        let timestamp = Date().timeIntervalSince1970
+        let fileName: String
+        if let txId = transactionId, !txId.isEmpty {
+          fileName = "speech_recording_\(txId)_\(timestamp).m4a"
+        } else {
+          fileName = "speech_recording_\(timestamp).m4a"
+        }
+        let fileURL = tempDir.appendingPathComponent(fileName)
+        recordingFilePath = fileURL.path
+        
+        let settings: [String: Any] = [
+          AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+          AVSampleRateKey: fmt?.sampleRate ?? 44100,
+          AVNumberOfChannelsKey: fmt?.channelCount ?? 1,
+          AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
+        
+        audioFile = try AVAudioFile(forWriting: fileURL, settings: settings)
+        os_log("Audio recording file created at: %{PUBLIC}@", log: pluginLog, type: .info, fileURL.path)
+      } catch {
+        os_log("Failed to create audio file: %{PUBLIC}@", log: pluginLog, type: .error, error.localizedDescription)
+        audioFile = nil
+        recordingFilePath = nil
+      }
+      
       try catchExceptionAsError {
         self.inputNode?.installTap(
           onBus: self.busForNodeTap, bufferSize: self.speechBufferSize, format: fmt
         ) { (buffer: AVAudioPCMBuffer, when: AVAudioTime) in
           currentRequest.append(buffer)
           self.updateSoundLevel(buffer: buffer)
+          
+          // Write audio buffer to file
+          if let audioFile = self.audioFile {
+            do {
+              try audioFile.write(from: buffer)
+            } catch {
+              os_log("Failed to write audio buffer: %{PUBLIC}@", log: self.pluginLog, type: .error, error.localizedDescription)
+            }
+          }
         }
       }
       //    if ( inErrorTest ){

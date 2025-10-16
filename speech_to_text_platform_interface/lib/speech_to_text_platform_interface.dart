@@ -66,6 +66,7 @@ class SpeechListenOptions {
   final Duration? pauseFor;
   final Duration? listenFor;
   final String? localeId;
+  final String? transactionId;
 
   SpeechListenOptions({
     /// If true the listen session will automatically be canceled on a permanent error.
@@ -113,6 +114,10 @@ class SpeechListenOptions {
     /// The locale to use for the listen session, if null the system default
     /// locale will be used. This is only supported on iOS and Android.
     this.localeId = null,
+    
+    /// Optional transaction ID to include in the recording filename.
+    /// If provided, the filename will be: speech_recording_transactionId_timestamp.m4a
+    this.transactionId = null,
   });
 
   SpeechListenOptions copyWith({
@@ -126,6 +131,7 @@ class SpeechListenOptions {
     Duration? pauseFor,
     Duration? listenFor,
     String? localeId,
+    String? transactionId,
   }) {
     return SpeechListenOptions(
         cancelOnError: cancelOnError ?? this.cancelOnError,
@@ -137,7 +143,8 @@ class SpeechListenOptions {
         enableHapticFeedback: enableHapticFeedback ?? this.enableHapticFeedback,
         pauseFor: pauseFor ?? this.pauseFor,
         listenFor: listenFor ?? this.listenFor,
-        localeId: localeId ?? this.localeId);
+        localeId: localeId ?? this.localeId,
+        transactionId: transactionId ?? this.transactionId);
   }
 }
 
@@ -172,6 +179,7 @@ abstract class SpeechToTextPlatform extends PlatformInterface {
   void Function(String error)? onError;
   void Function(String status)? onStatus;
   void Function(double level)? onSoundLevel;
+  void Function(String filePath)? onRecordingComplete;
 
   /// Returns true if the user has already granted permission to access the
   /// microphone, does not prompt the user.

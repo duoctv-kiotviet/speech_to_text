@@ -38,6 +38,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.*
 import java.util.concurrent.Executors
+import android.media.MediaRecorder
+import android.media.AudioFormat
+import android.media.AudioRecord
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 
 
 enum class SpeechToTextErrors {
@@ -55,6 +61,7 @@ enum class SpeechToTextCallbackMethods {
     notifyStatus,
     notifyError,
     soundLevelChange,
+    recordingComplete,
 }
 
 enum class SpeechToTextStatus {
@@ -135,6 +142,10 @@ public class SpeechToTextPlugin :
     private val defaultLanguageTag: String = Locale.getDefault().toLanguageTag()
     private var timer: Timer? = null
     private lateinit var timerTask: TimerTask
+    
+    // Audio recording variables
+    private var mediaRecorder: MediaRecorder? = null
+    private var recordingFilePath: String? = null
 
     override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
 
@@ -215,9 +226,9 @@ public class SpeechToTextPlugin :
                                 "listenMode is required", null)
                         return
                     }
-                    val pauseFor =
-                        call.argument<Int?>("pauseFor")
-                    startListening(result, localeId, partialResults, listenModeIndex, onDevice, pauseFor )
+                    val pauseFor = call.argument<Int?>("pauseFor")
+                    val transactionId = call.argument<String?>("transactionId")
+                    startListening(result, localeId, partialResults, listenModeIndex, onDevice, pauseFor, transactionId)
                 }
                 "stop" -> stopListening(result)
                 "cancel" -> cancelListening(result)
@@ -281,7 +292,7 @@ public class SpeechToTextPlugin :
     }
 
     private fun startListening(result: Result, languageTag: String, partialResults: Boolean,
-                               listenModeIndex: Int, onDevice: Boolean, pauseFor: Int?) {
+                               listenModeIndex: Int, onDevice: Boolean, pauseFor: Int?, transactionId: String?) {
         if (sdkVersionTooLow() || isNotInitialized() || isListening()) {
             result.success(false)
             return
@@ -293,6 +304,9 @@ public class SpeechToTextPlugin :
         minRms = 1000.0F
         maxRms = -100.0F
         debugLog("Start listening")
+
+        // Initialize audio recording
+        startAudioRecording(transactionId)
 
         optionallyStartBluetooth()
         setupRecognizerIntent(languageTag, partialResults, listenMode, onDevice, pauseFor )
@@ -417,6 +431,10 @@ public class SpeechToTextPlugin :
                 timer?.cancel()
                 timer = null
             }
+            
+            // Stop audio recording and send callback
+            stopAudioRecording()
+            
             val doneStatus = when( resultSent) {
                 false -> SpeechToTextStatus.doneNoResult.name
                 else -> SpeechToTextStatus.done.name
@@ -816,6 +834,81 @@ public class SpeechToTextPlugin :
     override fun onReadyForSpeech(p0: Bundle?) {}
     override fun onBufferReceived(p0: ByteArray?) {}
     override fun onEvent(p0: Int, p1: Bundle?) {}
+
+    private fun startAudioRecording(transactionId: String?) {
+        try {
+            val context = pluginContext ?: return
+            val cacheDir = context.cacheDir
+            val timestamp = System.currentTimeMillis()
+            val fileName = if (!transactionId.isNullOrEmpty()) {
+                "speech_recording_${transactionId}_${timestamp}.m4a"
+            } else {
+                "speech_recording_${timestamp}.m4a"
+            }
+            val recordingFile = File(cacheDir, fileName)
+            recordingFilePath = recordingFile.absolutePath
+            
+            mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(context)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
+            }
+            
+            mediaRecorder?.apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setAudioEncodingBitRate(128000)
+                setAudioSamplingRate(44100)
+                setOutputFile(recordingFilePath)
+                
+                prepare()
+                start()
+                debugLog("Audio recording started: $recordingFilePath")
+            }
+        } catch (e: IOException) {
+            Log.e(logTag, "Failed to start audio recording", e)
+            mediaRecorder = null
+            recordingFilePath = null
+        } catch (e: Exception) {
+            Log.e(logTag, "Unexpected error starting audio recording", e)
+            mediaRecorder = null
+            recordingFilePath = null
+        }
+    }
+    
+    private fun stopAudioRecording() {
+        try {
+            mediaRecorder?.apply {
+                stop()
+                release()
+                debugLog("Audio recording stopped")
+            }
+            
+            recordingFilePath?.let { path ->
+                val file = File(path)
+                if (file.exists() && file.length() > 0) {
+                    debugLog("Audio recording file saved: $path")
+                    handler.post {
+                        channel?.invokeMethod(
+                            SpeechToTextCallbackMethods.recordingComplete.name,
+                            path
+                        )
+                    }
+                } else {
+                    debugLog("Audio recording file is empty or doesn't exist")
+                }
+            }
+        } catch (e: RuntimeException) {
+            Log.e(logTag, "Error stopping audio recording", e)
+        } catch (e: Exception) {
+            Log.e(logTag, "Unexpected error stopping audio recording", e)
+        } finally {
+            mediaRecorder = null
+            recordingFilePath = null
+        }
+    }
 
 }
 
